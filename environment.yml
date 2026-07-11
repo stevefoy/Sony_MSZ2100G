@@ -5,3 +5,4 @@ dependencies:
   - python=3.11
   - numpy>=1.24
   - pillow>=10.0
+  - opencv>=4.8    # for align_ndvi.py (band-to-band registration)
