@@ -7,8 +7,9 @@ into standard images (PNG previews + 16-bit TIFFs) and computes NDVI maps.
 The camera's RGB raw format is undocumented, proprietary, and (on firmware 2.00)
 block-compressed on-sensor. The formats supported here were reverse-engineered
 from real captures — see [docs/FORMAT.md](docs/FORMAT.md) for the full
-specification. As far as we know this is the only decoder for these files
-outside Sony's own Fast Field Analyzer software.
+specification and [docs/TUTORIAL.md](docs/TUTORIAL.md) for a hands-on,
+step-by-step decoding walkthrough. As far as we know this is the only decoder
+for these files outside Sony's own Fast Field Analyzer software.
 
 ## Supported inputs
 

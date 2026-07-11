@@ -123,4 +123,3 @@ the old format's half-res demosaic (but 8-bit + JPEG instead of 12-bit).
    a second camera photographing the same instant is ground truth.
 5. **Check for hidden pages/planes** before declaring data lost — `Image.seek()`
    costs one line and in this project it recovered an entire colour sensor.
-"""
