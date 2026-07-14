@@ -90,11 +90,26 @@ def colormap_ryg(ndvi, lo=-0.5, hi=0.5):
     return c
 
 def render_rgb(c):
-    bm = np.median(c[:1288,:2272].reshape(322,4,568,4,3), axis=(1,3))
+    """Display render: gray-world+white-patch WB, tone curve, saturation,
+    chroma denoise, unsharp mask."""
+    H, W, _ = c.shape
+    bm = np.median(c[:H//4*4, :W//4*4].reshape(H//4,4,W//4,4,3), axis=(1,3))
     med = np.median(bm.reshape(-1,3), axis=0)+1e-6
-    c = c*np.clip(med.mean()/med, 0.7, 1.5)
-    hi = max(np.percentile(bm.mean(axis=2), 99.8), 30)
-    return (np.clip(c/hi, 0, 1)**0.5*255).astype(np.uint8)
+    w99 = np.percentile(bm.reshape(-1,3), 99, axis=0)+1e-6
+    c = c * (0.5*(med.mean()/med) + 0.5*(w99.mean()/w99))
+    lum = c.mean(axis=2)
+    lo, hi = np.percentile(lum, [0.5, 99.5])
+    if hi - lo < 6: hi = lo + 30          # near-black guard
+    t = np.clip((c-lo)/(hi-lo), 0, 1)**0.55
+    y = t.mean(axis=2, keepdims=True)
+    t = np.clip(y + (t-y)*1.35, 0, 1)     # saturation
+    img = (t*255).astype(np.uint8)
+    ycc = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
+    ycc[...,1] = cv2.medianBlur(ycc[...,1], 5)
+    ycc[...,2] = cv2.medianBlur(ycc[...,2], 5)
+    yl = ycc[...,0].astype(np.float32)
+    ycc[...,0] = np.clip(yl + 0.7*(yl - cv2.GaussianBlur(yl,(0,0),1.5)), 0, 255).astype(np.uint8)
+    return cv2.cvtColor(ycc, cv2.COLOR_YCrCb2RGB)
 
 def main():
     sdir, odir = sys.argv[1], sys.argv[2]
