@@ -1,0 +1,5 @@
+{
+ "wb_daylight_RGB_gains": [1.810, 1.0, 1.641],
+ "source": "colour chart, session 20170701000045 frame 0003, unclipped neutral gray patches (direct daylight)",
+ "note": "gains applied to (R,G,B) after black-level subtraction; cam1 fw2.20 planes. Highlights must be clipped at the green saturation level (240 after black subtraction) before applying gains to avoid magenta casts."
+}

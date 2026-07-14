@@ -15,6 +15,8 @@ Notes:
     only the cam2->cam1 transform is estimated.
   - The two lenses sit ~3 cm apart: at drone altitude one saved transform serves
     all frames; at close range expect parallax off the dominant scene plane.
+  - RGB white balance is chart-calibrated for daylight (see wb_daylight.json);
+    pass wb=None to render_rgb for scene-adaptive gray-world instead.
 """
 import numpy as np, cv2, sys, os, glob, json
 from PIL import Image
@@ -89,14 +91,22 @@ def colormap_ryg(ndvi, lo=-0.5, hi=0.5):
     c[...,1] = np.clip(2*t, 0, 1)       # G
     return c
 
-def render_rgb(c):
-    """Display render: gray-world+white-patch WB, tone curve, saturation,
-    chroma denoise, unsharp mask."""
+# Daylight white balance measured from a colour chart's neutral patches
+# (session 20170701000045). Pass wb=None for scene-adaptive gray-world.
+WB_DAYLIGHT = np.array([1.810, 1.0, 1.641], np.float32)
+SAT = 240.0   # channel saturation level after black subtraction (fw2.20 planes)
+
+def render_rgb(c, wb=WB_DAYLIGHT):
+    """Display render: chart-calibrated WB (or gray-world), highlight-safe
+    clipping, tone curve, saturation, chroma denoise, unsharp mask."""
     H, W, _ = c.shape
     bm = np.median(c[:H//4*4, :W//4*4].reshape(H//4,4,W//4,4,3), axis=(1,3))
-    med = np.median(bm.reshape(-1,3), axis=0)+1e-6
-    w99 = np.percentile(bm.reshape(-1,3), 99, axis=0)+1e-6
-    c = c * (0.5*(med.mean()/med) + 0.5*(w99.mean()/w99))
+    if wb is None:
+        med = np.median(bm.reshape(-1,3), axis=0)+1e-6
+        w99 = np.percentile(bm.reshape(-1,3), 99, axis=0)+1e-6
+        wb = 0.5*(med.mean()/med) + 0.5*(w99.mean()/w99)
+    c = np.minimum(c * wb, SAT)   # clip at green-saturation point: blown = white
+    bm = np.minimum(bm * wb, SAT)
     lum = c.mean(axis=2)
     lo, hi = np.percentile(lum, [0.5, 99.5])
     if hi - lo < 6: hi = lo + 30          # near-black guard
