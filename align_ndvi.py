@@ -6,15 +6,15 @@ Usage:
 For each frame pair in the session:
   1. decode RGB (fw2.00 .raw or fw2.20 4-page .tiff) at half-res colour (2272x1292)
   2. estimate cam2->cam1 homography by ECC on gradient images (RED band vs R channel)
-     - reuses/saves the homography in calib.json (per-camera it is stable at distance)
-  3. compute NDVI from RED/NIR, warp into the RGB frame, alpha-blend with the
+     - reuses/saves the base homography in calib.json (rotation/scale are stable)
+  3. refine the translation PER FRAME (fast ECC at 1/4 scale) — this tracks the
+     parallax shift caused by camera height/distance changes (3 cm lens baseline)
+  4. compute NDVI from RED/NIR, warp into the RGB frame, alpha-blend with the
      standard red(low) -> yellow -> green(high) colormap.
 
 Notes:
-  - RED and NIR come from the same sensor, so NDVI needs no internal alignment;
-    only the cam2->cam1 transform is estimated.
-  - The two lenses sit ~3 cm apart: at drone altitude one saved transform serves
-    all frames; at close range expect parallax off the dominant scene plane.
+  - RED and NIR come from the same sensor, so NDVI needs no internal alignment.
+  - Frames with too little texture for refinement fall back to the base transform.
   - RGB white balance is chart-calibrated for daylight (see wb_daylight.json);
     pass wb=None to render_rgb for scene-adaptive gray-world instead.
 """
@@ -77,6 +77,24 @@ def estimate_h(red, rgb):
     H = S_lvl_to_full @ np.linalg.inv(W3) @ S_cam2_to_srcs
     return H.astype(np.float32), float(cc_out)
 
+def refine_translation(red, rgb, H_base):
+    """Per-frame parallax correction: warp RED by H_base, then estimate the
+    residual translation against the RGB red channel with ECC at 1/4 scale.
+    Returns H with updated translation and the ECC score."""
+    sc = 4
+    tgt = cv2.resize(grad(rgb[...,0]), (2272//sc, 1292//sc), interpolation=cv2.INTER_AREA)
+    warped = cv2.warpPerspective(red, H_base, (2272,1292))
+    src = cv2.resize(grad(warped), (2272//sc, 1292//sc), interpolation=cv2.INTER_AREA)
+    W = np.eye(2,3, dtype=np.float32)
+    crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 80, 1e-6)
+    try:
+        cc, W = cv2.findTransformECC(tgt, src, W, cv2.MOTION_TRANSLATION, crit, None, 3)
+    except cv2.error:
+        return H_base, -1.0
+    # shift in full-res half-frame coords (invert: W maps tgt->src)
+    T = np.array([[1,0,-W[0,2]*sc],[0,1,-W[1,2]*sc],[0,0,1]], np.float32)
+    return (T @ H_base).astype(np.float32), float(cc)
+
 def ndvi_map(red, nir):
     r = cv2.blur(red, (3,3)).clip(0.1); n = cv2.blur(nir, (3,3)).clip(0.1)
     ndvi = (n-r)/(n+r)
@@ -137,13 +155,17 @@ def main():
         nf = os.path.join(sdir, f"{base}_{idx}_NIR.raw")
         if not (os.path.exists(rf) and os.path.exists(nf)): continue
         rgb = load_rgb(rp); red, nir = load_band(rf), load_band(nf)
-        if H_saved is not None:
-            H, cc = H_saved, float('nan')
+        if H_saved is None:
+            H0, cc0 = estimate_h(red, rgb)
+            if cc0 > 0.2 and calib:
+                json.dump({'H': H0.tolist(), 'ecc': cc0}, open(calib,'w'), indent=1)
+                H_saved = H0
         else:
-            H, cc = estimate_h(red, rgb)
-            if cc > 0.2 and calib:
-                json.dump({'H': H.tolist(), 'ecc': cc}, open(calib,'w'), indent=1)
-                H_saved = H
+            H0 = H_saved
+        # per-frame parallax refinement (translation tracks camera height)
+        H, cc = refine_translation(red, rgb, H0)
+        if cc < 0.15:                      # low texture: keep base transform
+            H = H0
         ndvi, valid = ndvi_map(red, nir)
         ndvi_w = cv2.warpPerspective(ndvi, H, (2272,1292), flags=cv2.INTER_LINEAR)
         valid_w = cv2.warpPerspective(valid.astype(np.float32), H, (2272,1292)) > 0.5
